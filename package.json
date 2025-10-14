@@ -1,0 +1,55 @@
+{
+  "name": "@refinio/one.fuse3",
+  "version": "1.0.0",
+  "description": "Cross-platform FUSE3 implementation - native FUSE3 on Linux, ProjFS bridge on Windows",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "os": [
+    "linux",
+    "win32"
+  ],
+  "scripts": {
+    "build": "npm run build:native && npm run build:ts",
+    "build:native": "node-gyp rebuild",
+    "build:ts": "tsc",
+    "clean": "rimraf dist build",
+    "test": "npm run build && node test/test-cross-platform.js",
+    "install": "node-gyp-build"
+  },
+  "dependencies": {
+    "bindings": "^1.5.0",
+    "node-addon-api": "^7.0.0",
+    "node-gyp-build": "^4.8.4"
+  },
+  "devDependencies": {
+    "@types/bindings": "^1.5.5",
+    "@types/node": "^20.0.0",
+    "node-gyp": "^10.0.1",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/refinio/one.fuse3.git"
+  },
+  "keywords": [
+    "fuse",
+    "fuse3",
+    "filesystem",
+    "virtual-filesystem",
+    "cross-platform",
+    "linux",
+    "windows",
+    "projfs",
+    "projected-file-system",
+    "node-addon",
+    "native-module"
+  ],
+  "author": "REFINIO GmbH",
+  "license": "MIT",
+  "gypfile": true
+}
