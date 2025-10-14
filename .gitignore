@@ -34,6 +34,3 @@ coverage/
 
 # Misc
 nul
-
-# Exclude nested one.projfs directory (separate repo)
-one.projfs/
