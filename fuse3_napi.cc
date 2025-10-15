@@ -1,6 +1,6 @@
 #include <napi.h>
-#include <fuse.h>
-#include <fuse_lowlevel.h>
+#include <fuse3/fuse.h>
+#include <fuse3/fuse_lowlevel.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -164,16 +164,8 @@ Fuse3::Fuse3(const Napi::CallbackInfo& info) : Napi::ObjectWrap<Fuse3>(info) {
 }
 
 Fuse3::~Fuse3() {
-    if (context_ && context_->mounted) {
-        // Clean unmount on destruction
-        if (context_->fuse) {
-            fuse_exit(context_->fuse);
-        }
-        if (context_->fuseThread) {
-            context_->fuseThread->join();
-            delete context_->fuseThread;
-        }
-    }
+    // Context may have been moved to global map, skip cleanup here
+    // Unmount() should be called explicitly before destruction
 }
 
 Napi::Value Fuse3::Mount(const Napi::CallbackInfo& info) {
@@ -192,18 +184,21 @@ Napi::Value Fuse3::Mount(const Napi::CallbackInfo& info) {
         0,                              // Unlimited queue
         1                               // One thread
     );
-    
+
+    // Save mount point before moving context
+    std::string mountPoint = context_->mountPoint;
+
     // Store context in global map
     {
         std::lock_guard<std::mutex> lock(g_contexts_mutex);
-        g_contexts[context_->mountPoint] = std::move(context_);
+        g_contexts[mountPoint] = std::move(context_);
     }
-    
+
     // Get context back from map
     FuseContext* ctx = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_contexts_mutex);
-        ctx = g_contexts[context_->mountPoint].get();
+        ctx = g_contexts[mountPoint].get();
     }
     
     // Create FUSE thread
@@ -211,12 +206,9 @@ Napi::Value Fuse3::Mount(const Napi::CallbackInfo& info) {
         // Initialize FUSE operations
         init_fuse_operations();
         
-        // FUSE arguments
+        // FUSE arguments - minimal setup for FUSE3
         struct fuse_args args = FUSE_ARGS_INIT(0, nullptr);
-        fuse_opt_add_arg(&args, "fuse3_napi");
-        fuse_opt_add_arg(&args, ctx->mountPoint.c_str());
-        fuse_opt_add_arg(&args, "-f"); // Foreground operation
-        fuse_opt_add_arg(&args, "-s"); // Single-threaded
+        fuse_opt_add_arg(&args, "fuse3_napi"); // Program name
         
         // Create FUSE instance
         ctx->fuse = fuse_new(&args, &fuse3_ops, sizeof(fuse3_ops), nullptr);
@@ -261,39 +253,43 @@ Napi::Value Fuse3::Mount(const Napi::CallbackInfo& info) {
 
 Napi::Value Fuse3::Unmount(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    
+
+    // Find context in global map - need to iterate since context_ was moved
     FuseContext* ctx = nullptr;
+    std::string mountPoint;
     {
         std::lock_guard<std::mutex> lock(g_contexts_mutex);
-        auto it = g_contexts.find(context_->mountPoint);
-        if (it != g_contexts.end()) {
+        // Since we only expect one mounted filesystem, get the first one
+        if (!g_contexts.empty()) {
+            auto it = g_contexts.begin();
             ctx = it->second.get();
+            mountPoint = it->first;
         }
     }
-    
+
     if (!ctx || !ctx->mounted) {
         Napi::Error::New(env, "Not mounted").ThrowAsJavaScriptException();
         return env.Undefined();
     }
-    
+
     // Signal FUSE to exit
     if (ctx->fuse) {
         fuse_exit(ctx->fuse);
     }
-    
+
     // Wait for thread to finish
     if (ctx->fuseThread) {
         ctx->fuseThread->join();
         delete ctx->fuseThread;
         ctx->fuseThread = nullptr;
     }
-    
+
     // Remove from global map
     {
         std::lock_guard<std::mutex> lock(g_contexts_mutex);
-        g_contexts.erase(context_->mountPoint);
+        g_contexts.erase(mountPoint);
     }
-    
+
     return env.Undefined();
 }
 

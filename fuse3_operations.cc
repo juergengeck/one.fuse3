@@ -73,13 +73,23 @@ static int CallJsOperation(const std::string& opName, const char* path, Args&&..
 
 // FUSE operation implementations
 int fuse3_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi) {
+    fprintf(stderr, "[C++] fuse3_getattr called for path: %s\n", path);
+    fflush(stderr);
+
     FuseContext* ctx = GetContextFromPath(path);
-    if (!ctx) return -EIO;
-    
+    if (!ctx) {
+        fprintf(stderr, "[C++] fuse3_getattr: no context found!\n");
+        fflush(stderr);
+        return -EIO;
+    }
+
     memset(stbuf, 0, sizeof(struct stat));
-    
+
     auto promise = std::make_shared<std::promise<int>>();
     std::future<int> future = promise->get_future();
+
+    fprintf(stderr, "[C++] fuse3_getattr: calling ThreadSafeFunction\n");
+    fflush(stderr);
     
     auto callback = [path, stbuf, promise, ctx](Napi::Env env, Napi::Function jsCallback) {
         try {
@@ -152,11 +162,21 @@ int fuse3_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *f
 
 int fuse3_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                   off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
+    fprintf(stderr, "[C++] fuse3_readdir called for path: %s\n", path);
+    fflush(stderr);
+
     FuseContext* ctx = GetContextFromPath(path);
-    if (!ctx) return -EIO;
-    
+    if (!ctx) {
+        fprintf(stderr, "[C++] fuse3_readdir: no context!\n");
+        fflush(stderr);
+        return -EIO;
+    }
+
     auto promise = std::make_shared<std::promise<int>>();
     std::future<int> future = promise->get_future();
+
+    fprintf(stderr, "[C++] fuse3_readdir: calling ThreadSafeFunction\n");
+    fflush(stderr);
     
     auto callback = [path, buf, filler, promise, ctx](Napi::Env env, Napi::Function jsCallback) {
         try {
@@ -207,16 +227,113 @@ int fuse3_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 }
 
 int fuse3_open(const char *path, struct fuse_file_info *fi) {
-    return CallJsOperation("open", path, fi->flags);
+    fprintf(stderr, "[C++] fuse3_open called for path: %s\n", path);
+    fflush(stderr);
+
+    FuseContext* ctx = GetContextFromPath(path);
+    if (!ctx) {
+        fprintf(stderr, "[C++] fuse3_open: no context!\n");
+        fflush(stderr);
+        return -EIO;
+    }
+
+    auto promise = std::make_shared<std::promise<int>>();
+    std::future<int> future = promise->get_future();
+
+    int flags = fi->flags;
+
+    auto callback = [path, flags, fi, promise, ctx](Napi::Env env, Napi::Function jsCallback) {
+        try {
+            fprintf(stderr, "[C++] fuse3_open callback: getting operations object\n");
+            fflush(stderr);
+
+            Napi::Object ops = ctx->operations.Value();
+            fprintf(stderr, "[C++] fuse3_open callback: got operations, getting open function\n");
+            fflush(stderr);
+
+            Napi::Value open = ops.Get("open");
+
+            if (!open.IsFunction()) {
+                fprintf(stderr, "[C++] fuse3_open callback: open is not a function!\n");
+                fflush(stderr);
+                promise->set_value(-ENOSYS);
+                return;
+            }
+
+            fprintf(stderr, "[C++] fuse3_open callback: creating result callback\n");
+            fflush(stderr);
+
+            auto resultCb = Napi::Function::New(env, [promise, fi](const Napi::CallbackInfo& info) {
+                fprintf(stderr, "[C++] fuse3_open resultCb called with %d args\n", (int)info.Length());
+                fflush(stderr);
+
+                if (info.Length() > 0 && info[0].IsNumber()) {
+                    int result = info[0].As<Napi::Number>().Int32Value();
+                    // Force direct_io to bypass caching and ensure read is called
+                    fi->direct_io = 1;
+                    fprintf(stderr, "[C++] fuse3_open: set direct_io=1, result=%d\n", result);
+                    fflush(stderr);
+                    promise->set_value(result);
+                } else {
+                    fi->direct_io = 1;
+                    fprintf(stderr, "[C++] fuse3_open: set direct_io=1 (default path)\n");
+                    fflush(stderr);
+                    promise->set_value(0);
+                }
+            });
+
+            fprintf(stderr, "[C++] fuse3_open callback: calling JS open function\n");
+            fflush(stderr);
+
+            open.As<Napi::Function>().Call(ops, {
+                Napi::String::New(env, path),
+                Napi::Number::New(env, flags),
+                resultCb
+            });
+
+            fprintf(stderr, "[C++] fuse3_open callback: JS open function called\n");
+            fflush(stderr);
+
+        } catch (const Napi::Error& e) {
+            std::string msg = e.Message();
+            fprintf(stderr, "[C++] fuse3_open callback: Napi::Error: %s\n", msg.c_str());
+            fflush(stderr);
+            promise->set_value(-EIO);
+        } catch (const std::exception& e) {
+            fprintf(stderr, "[C++] fuse3_open callback: std::exception: %s\n", e.what());
+            fflush(stderr);
+            promise->set_value(-EIO);
+        } catch (...) {
+            fprintf(stderr, "[C++] fuse3_open callback: unknown exception\n");
+            fflush(stderr);
+            promise->set_value(-EIO);
+        }
+    };
+
+    ctx->tsfn.BlockingCall(callback);
+    int result = future.get();
+    fprintf(stderr, "[C++] fuse3_open: returning %d\n", result);
+    fflush(stderr);
+    return result;
 }
 
 int fuse3_read(const char *path, char *buf, size_t size, off_t offset,
                struct fuse_file_info *fi) {
+    fprintf(stderr, "[C++] fuse3_read called for path: %s, size: %zu, offset: %ld\n", path, size, offset);
+    fflush(stderr);
+
     FuseContext* ctx = GetContextFromPath(path);
-    if (!ctx) return -EIO;
-    
+    if (!ctx) {
+        fprintf(stderr, "[C++] fuse3_read: no context!\n");
+        fflush(stderr);
+        return -EIO;
+    }
+
     auto promise = std::make_shared<std::promise<int>>();
     std::future<int> future = promise->get_future();
+
+    fprintf(stderr, "[C++] fuse3_read: calling ThreadSafeFunction\n");
+    fflush(stderr);
     
     auto callback = [path, buf, size, offset, fi, promise, ctx](Napi::Env env, Napi::Function jsCallback) {
         try {
@@ -229,24 +346,27 @@ int fuse3_read(const char *path, char *buf, size_t size, off_t offset,
             }
             
             auto resultCb = Napi::Function::New(env, [buf, size, promise](const Napi::CallbackInfo& info) {
-                if (info.Length() < 2) {
+                if (info.Length() < 1) {
                     promise->set_value(-EINVAL);
                     return;
                 }
-                
-                int err = info[0].As<Napi::Number>().Int32Value();
-                if (err < 0) {
-                    promise->set_value(err);
+
+                int result = info[0].As<Napi::Number>().Int32Value();
+                if (result < 0) {
+                    // Error case - negative error code
+                    promise->set_value(result);
                     return;
                 }
-                
-                if (info[1].IsBuffer()) {
+
+                // Success case: result is bytesRead, second arg is buffer
+                if (info.Length() >= 2 && info[1].IsBuffer()) {
                     Napi::Buffer<char> buffer = info[1].As<Napi::Buffer<char>>();
-                    size_t bytesRead = std::min(size, buffer.Length());
+                    size_t bytesRead = std::min((size_t)result, size);  // Use actual bytesRead from JS
                     memcpy(buf, buffer.Data(), bytesRead);
                     promise->set_value(bytesRead);
                 } else {
-                    promise->set_value(0);
+                    // EOF case - just return the bytesRead (should be 0)
+                    promise->set_value(result);
                 }
             });
             
@@ -356,7 +476,45 @@ int fuse3_utimens(const char *path, const struct timespec ts[2], struct fuse_fil
 }
 
 int fuse3_release(const char *path, struct fuse_file_info *fi) {
-    return CallJsOperation("release", path, fi->fh);
+    FuseContext* ctx = GetContextFromPath(path);
+    if (!ctx) return -EIO;
+
+    auto promise = std::make_shared<std::promise<int>>();
+    std::future<int> future = promise->get_future();
+
+    uint64_t fh = fi->fh;
+
+    auto callback = [path, fh, promise, ctx](Napi::Env env, Napi::Function jsCallback) {
+        try {
+            Napi::Object ops = ctx->operations.Value();
+            Napi::Value release = ops.Get("release");
+
+            if (!release.IsFunction()) {
+                promise->set_value(0);  // Not implementing release is OK
+                return;
+            }
+
+            auto resultCb = Napi::Function::New(env, [promise](const Napi::CallbackInfo& info) {
+                if (info.Length() > 0 && info[0].IsNumber()) {
+                    promise->set_value(info[0].As<Napi::Number>().Int32Value());
+                } else {
+                    promise->set_value(0);
+                }
+            });
+
+            release.As<Napi::Function>().Call(ops, {
+                Napi::String::New(env, path),
+                Napi::Number::New(env, static_cast<double>(fh)),
+                resultCb
+            });
+
+        } catch (...) {
+            promise->set_value(-EIO);
+        }
+    };
+
+    ctx->tsfn.BlockingCall(callback);
+    return future.get();
 }
 
 int fuse3_fsync(const char *path, int isdatasync, struct fuse_file_info *fi) {

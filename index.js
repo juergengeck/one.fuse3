@@ -2,35 +2,51 @@
  * JavaScript interface for FUSE3 N-API addon
  */
 
-const path = require('path');
-const fs = require('fs');
-const { EventEmitter } = require('events');
+console.log('[index.js] MODULE LOADING');
+
+import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import path from 'path';
+import fs from 'fs';
+import { EventEmitter } from 'events';
+
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Try to load the compiled addon
 let fuse3_napi;
 try {
-    // Try different paths where the addon might be
+    // Prioritize absolute paths (work from node_modules), then try relative paths
     const possiblePaths = [
+        path.join(__dirname, 'build/Release/fuse3_napi.node'),
+        path.join(__dirname, 'build/Debug/fuse3_napi.node'),
         './build/Release/fuse3_napi.node',
         './build/Debug/fuse3_napi.node',
         '../build/Release/fuse3_napi.node',
-        '../build/Debug/fuse3_napi.node',
-        path.join(__dirname, 'build/Release/fuse3_napi.node'),
-        path.join(__dirname, 'build/Debug/fuse3_napi.node')
+        '../build/Debug/fuse3_napi.node'
     ];
-    
+
     for (const addonPath of possiblePaths) {
         try {
             fuse3_napi = require(addonPath);
-            console.log(`Loaded FUSE3 N-API addon from: ${addonPath}`);
             break;
         } catch (e) {
-            // Try next path
+            // If it's not a "cannot find module" error, this is a real loading issue
+            if (e.code !== 'MODULE_NOT_FOUND') {
+                throw e;
+            }
         }
     }
-    
+
     if (!fuse3_napi) {
         throw new Error('Could not find compiled FUSE3 N-API addon');
+    }
+
+    // Verify addon is valid
+    if (!fuse3_napi.Fuse3 || typeof fuse3_napi.Fuse3 !== 'function') {
+        throw new Error('FUSE3 N-API addon is invalid - missing Fuse3 constructor');
     }
 } catch (err) {
     console.error('Failed to load FUSE3 N-API addon:', err.message);
@@ -39,18 +55,18 @@ try {
 }
 
 // Export error constants
-exports.EPERM = fuse3_napi.EPERM;
-exports.ENOENT = fuse3_napi.ENOENT;
-exports.EIO = fuse3_napi.EIO;
-exports.EACCES = fuse3_napi.EACCES;
-exports.EEXIST = fuse3_napi.EEXIST;
-exports.ENOTDIR = fuse3_napi.ENOTDIR;
-exports.EISDIR = fuse3_napi.EISDIR;
-exports.EINVAL = fuse3_napi.EINVAL;
-exports.ENOSPC = fuse3_napi.ENOSPC;
-exports.EROFS = fuse3_napi.EROFS;
-exports.EBUSY = fuse3_napi.EBUSY;
-exports.ENOTEMPTY = fuse3_napi.ENOTEMPTY;
+export const EPERM = fuse3_napi.EPERM;
+export const ENOENT = fuse3_napi.ENOENT;
+export const EIO = fuse3_napi.EIO;
+export const EACCES = fuse3_napi.EACCES;
+export const EEXIST = fuse3_napi.EEXIST;
+export const ENOTDIR = fuse3_napi.ENOTDIR;
+export const EISDIR = fuse3_napi.EISDIR;
+export const EINVAL = fuse3_napi.EINVAL;
+export const ENOSPC = fuse3_napi.ENOSPC;
+export const EROFS = fuse3_napi.EROFS;
+export const EBUSY = fuse3_napi.EBUSY;
+export const ENOTEMPTY = fuse3_napi.ENOTEMPTY;
 
 /**
  * FUSE3 class - JavaScript wrapper around N-API addon
@@ -74,7 +90,10 @@ class Fuse extends EventEmitter {
         
         // Wrap operations to handle errors properly
         this._wrappedOps = this._wrapOperations(operations);
-        
+
+        console.log('[Fuse constructor] Wrapped operations:', Object.keys(this._wrappedOps));
+        console.log('[Fuse constructor] wrapped.open type:', typeof this._wrappedOps.open);
+
         // Create native FUSE instance
         this._fuse = new fuse3_napi.Fuse3(this.mountPath, this._wrappedOps);
     }
@@ -114,11 +133,11 @@ class Fuse extends EventEmitter {
                         }
                     });
                 } catch (e) {
-                    cb(errnoToCode(e.errno || exports.EIO));
+                    cb(errnoToCode(e.errno || EIO));
                 }
             };
         }
-        
+
         if (ops.readdir) {
             wrapped.readdir = (path, cb) => {
                 try {
@@ -130,39 +149,53 @@ class Fuse extends EventEmitter {
                         }
                     });
                 } catch (e) {
-                    cb(errnoToCode(e.errno || exports.EIO), []);
+                    cb(errnoToCode(e.errno || EIO), []);
                 }
             };
         }
-        
+
         if (ops.open) {
             wrapped.open = (path, flags, cb) => {
+                console.log('[index.js wrapped.open] called with args:', {
+                    path,
+                    flags_type: typeof flags,
+                    flags_value: flags,
+                    cb_type: typeof cb,
+                    num_args: arguments.length
+                });
+                console.trace('[index.js wrapped.open] Call stack:');
                 try {
                     ops.open(path, flags, (err, fd) => {
+                        console.log('[index.js wrapped.open] callback: err=', err, 'fd=', fd);
                         cb(errnoToCode(err ? (err.errno || err) : 0), fd || 0);
                     });
                 } catch (e) {
-                    cb(errnoToCode(e.errno || exports.EIO), 0);
+                    console.log('[index.js wrapped.open] exception:', e);
+                    cb(errnoToCode(e.errno || EIO), 0);
                 }
             };
         }
-        
+
         if (ops.read) {
             wrapped.read = (path, fd, buffer, length, offset, cb) => {
                 try {
+                    // User's read callback is Node.js style: (err, bytesRead)
+                    // But C++ expects: (bytesRead, buffer) for success or (negativeError) for error
                     ops.read(path, fd, buffer, length, offset, (err, bytesRead) => {
                         if (err) {
+                            // Error: pass negative error code
                             cb(errnoToCode(err.errno || err));
                         } else {
+                            // Success: pass bytesRead and buffer
                             cb(bytesRead || 0, buffer);
                         }
                     });
                 } catch (e) {
-                    cb(errnoToCode(e.errno || exports.EIO));
+                    cb(errnoToCode(e.errno || EIO));
                 }
             };
         }
-        
+
         if (ops.write) {
             wrapped.write = (path, fd, buffer, length, offset, cb) => {
                 try {
@@ -170,15 +203,15 @@ class Fuse extends EventEmitter {
                         cb(errnoToCode(err ? (err.errno || err) : 0) || bytesWritten || 0);
                     });
                 } catch (e) {
-                    cb(errnoToCode(e.errno || exports.EIO));
+                    cb(errnoToCode(e.errno || EIO));
                 }
             };
         }
-        
+
         // Add more operation wrappers as needed
-        const simpleOps = ['create', 'unlink', 'mkdir', 'rmdir', 'rename', 'chmod', 
+        const simpleOps = ['create', 'unlink', 'mkdir', 'rmdir', 'rename', 'chmod',
                           'chown', 'truncate', 'release', 'fsync', 'flush'];
-        
+
         for (const op of simpleOps) {
             if (ops[op]) {
                 wrapped[op] = (...args) => {
@@ -188,7 +221,7 @@ class Fuse extends EventEmitter {
                             cb(errnoToCode(err ? (err.errno || err) : 0));
                         });
                     } catch (e) {
-                        cb(errnoToCode(e.errno || exports.EIO));
+                        cb(errnoToCode(e.errno || EIO));
                     }
                 };
             }
@@ -282,9 +315,6 @@ class Fuse extends EventEmitter {
     }
 }
 
-// Export the Fuse class
-exports.Fuse = Fuse;
-
-// For compatibility
-module.exports = Fuse;
-module.exports.Fuse = Fuse;
+// Export the Fuse class and error constants
+export { Fuse };
+export default Fuse;
