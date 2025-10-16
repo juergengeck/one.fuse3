@@ -368,6 +368,61 @@ async function connectUsingInvite(inviteUrl) {
 }
 
 /**
+ * Wait for SERVER to be online (connected to CommServer)
+ */
+async function waitForServerOnline(port, maxWaitMs = 30000) {
+    console.log(`   Waiting for SERVER to connect to CommServer (polling status endpoint)...`);
+
+    const http = await import('http');
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWaitMs) {
+        try {
+            const isOnline = await new Promise((resolve, reject) => {
+                const options = {
+                    hostname: '127.0.0.1',
+                    port: port,
+                    path: '/api/connections/status',
+                    method: 'GET',
+                    timeout: 2000
+                };
+
+                const req = http.default.request(options, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => data += chunk);
+                    res.on('end', () => {
+                        if (res.statusCode === 200) {
+                            const status = JSON.parse(data);
+                            resolve(status.online === true);
+                        } else {
+                            resolve(false);
+                        }
+                    });
+                });
+
+                req.on('error', () => resolve(false));
+                req.on('timeout', () => {
+                    req.destroy();
+                    resolve(false);
+                });
+                req.end();
+            });
+
+            if (isOnline) {
+                console.log(`   ✅ SERVER is online (connected to CommServer)`);
+                return;
+            }
+        } catch (err) {
+            // Continue polling
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    throw new Error(`SERVER did not come online within ${maxWaitMs}ms`);
+}
+
+/**
  * Query contacts from a refinio.api instance
  */
 async function queryContacts(port, instanceName) {
@@ -553,7 +608,7 @@ async function runConnectionTest() {
         }
 
         // Test 2: Check invites directory exists
-        console.log('\n2️⃣ Checking invites directory...');
+        console.log('\n5️⃣ Checking invites directory...');
         if (!fs.existsSync(INVITES_PATH)) {
             throw new Error(`Invites directory not found: ${INVITES_PATH}\n` +
                            `   The PairingFileSystem may not be mounted.`);
@@ -566,7 +621,7 @@ async function runConnectionTest() {
         console.log(`   Files in invites/: ${inviteFiles.join(', ')}`);
 
         // Test 3: Check IOP invite file exists
-        console.log('\n3️⃣ Checking IOP (Instance of Person) invite file...');
+        console.log('\n6️⃣ Checking IOP (Instance of Person) invite file...');
         if (!fs.existsSync(IOP_INVITE_FILE)) {
             throw new Error(`IOP invite file not found: ${IOP_INVITE_FILE}`);
         }
@@ -574,7 +629,7 @@ async function runConnectionTest() {
         console.log(`✅ IOP invite file exists: ${IOP_INVITE_FILE}`);
 
         // Test 4: Check IOM invite file exists
-        console.log('\n4️⃣ Checking IOM (Instance of Machine) invite file...');
+        console.log('\n7️⃣ Checking IOM (Instance of Machine) invite file...');
         if (!fs.existsSync(IOM_INVITE_FILE)) {
             throw new Error(`IOM invite file not found: ${IOM_INVITE_FILE}`);
         }
@@ -582,7 +637,7 @@ async function runConnectionTest() {
         console.log(`✅ IOM invite file exists: ${IOM_INVITE_FILE}`);
 
         // Test 5: Read and validate IOP invite
-        console.log('\n5️⃣ Reading and validating IOP invite...');
+        console.log('\n8️⃣ Reading and validating IOP invite...');
         let iopInviteContent;
         try {
             iopInviteContent = (await fs.promises.readFile(IOP_INVITE_FILE, 'utf-8')).trim();
@@ -613,7 +668,7 @@ async function runConnectionTest() {
         }
 
         // Test 6: Read and validate IOM invite
-        console.log('\n6️⃣ Reading and validating IOM invite...');
+        console.log('\n9️⃣ Reading and validating IOM invite...');
         let iomInviteContent;
         try {
             iomInviteContent = (await fs.promises.readFile(IOM_INVITE_FILE, 'utf-8')).trim();
@@ -642,7 +697,7 @@ async function runConnectionTest() {
         }
 
         // Test 7: Verify both invites use same CommServer
-        console.log('\n7️⃣ Verifying CommServer consistency...');
+        console.log('\n🔟 Verifying CommServer consistency...');
         if (iopInviteData.url !== iomInviteData.url) {
             console.log(`⚠️  Warning: IOP and IOM invites use different CommServers`);
             console.log(`   IOP: ${iopInviteData.url}`);
@@ -670,12 +725,16 @@ async function runConnectionTest() {
         console.log('   ✅ PairingFileSystem is exposing invite files');
         console.log('   ✅ Invite content is valid and ready for connection');
 
+        // Wait for SERVER to be fully connected to CommServer before starting CLIENT
+        console.log('\n   Ensuring SERVER is fully connected to CommServer...');
+        await waitForServerOnline(SERVER_PORT + 1);  // HTTP API port
+
         // Test 8: Start CLIENT instance
-        console.log('\n8️⃣ Starting CLIENT refinio.api instance...');
+        console.log('\n1️⃣1️⃣ Starting CLIENT refinio.api instance...');
         await startClientInstance();
 
         // Test 9: CLIENT connects to SERVER using invite from FUSE mount
-        console.log('\n9️⃣ Establishing connection using invite from FUSE mount...');
+        console.log('\n1️⃣2️⃣ Establishing connection using invite from FUSE mount...');
         await connectUsingInvite(iopInviteContent);
 
         // Wait for connection to stabilize and contacts to be created
@@ -683,7 +742,7 @@ async function runConnectionTest() {
         await new Promise(resolve => setTimeout(resolve, 5000));
 
         // Test 10: Verify bidirectional contact creation
-        console.log('\n🔟 Verifying bidirectional contact creation...');
+        console.log('\n1️⃣3️⃣ Verifying bidirectional contact creation...');
 
         const serverContacts = await queryContacts(SERVER_PORT + 1, 'SERVER');  // HTTP REST API port
         const clientContacts = await queryContacts(CLIENT_PORT + 1, 'CLIENT');  // HTTP REST API port
