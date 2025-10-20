@@ -116,10 +116,21 @@ async function cleanupTestEnvironment() {
         serverProcess = null;
     }
 
-    // Unmount FUSE if still mounted
+    // Run cleanup script to handle stale mounts
+    const cleanupScriptPath = path.resolve(__dirname, '../../cleanup-mounts.sh');
+    if (fs.existsSync(cleanupScriptPath)) {
+        try {
+            execSync(cleanupScriptPath, { stdio: 'inherit' });
+        } catch (err) {
+            console.log('   Warning: cleanup-mounts.sh failed, continuing with manual cleanup...');
+        }
+    }
+
+    // Unmount FUSE if still mounted (backup in case script didn't work)
     if (fs.existsSync(MOUNT_POINT)) {
         try {
-            execSync(`fusermount3 -u ${MOUNT_POINT} 2>/dev/null || fusermount -u ${MOUNT_POINT} 2>/dev/null || true`, { stdio: 'ignore' });
+            execSync(`fusermount3 -u "${MOUNT_POINT}" 2>/dev/null || fusermount -u "${MOUNT_POINT}" 2>/dev/null || true`, { stdio: 'pipe' });
+            await new Promise(resolve => setTimeout(resolve, 300));
             console.log(`   Unmounted ${MOUNT_POINT}`);
         } catch {
             // Ignore errors - may not be mounted
@@ -138,11 +149,10 @@ async function cleanupTestEnvironment() {
         }
     }
 
-
     // Remove mount point directory
     if (fs.existsSync(MOUNT_POINT)) {
         try {
-            fs.rmdirSync(MOUNT_POINT);
+            fs.rmSync(MOUNT_POINT, { recursive: true, force: true });
             console.log(`   Removed ${MOUNT_POINT}`);
         } catch (err) {
             console.log(`   Failed to remove ${MOUNT_POINT}:`, err.message);
@@ -544,6 +554,17 @@ async function runConnectionTest() {
     console.log(`Mount Point: ${MOUNT_POINT}`);
     console.log(`Invites Path: ${INVITES_PATH}\n`);
 
+    // Run cleanup script at the very beginning to handle stale mounts
+    console.log('Running initial cleanup to handle any stale mounts...');
+    const cleanupScriptPath = path.resolve(__dirname, '../../cleanup-mounts.sh');
+    if (fs.existsSync(cleanupScriptPath)) {
+        try {
+            execSync(cleanupScriptPath, { stdio: 'inherit' });
+        } catch (err) {
+            console.log('Warning: cleanup-mounts.sh failed, continuing anyway...');
+        }
+    }
+
     // Setup: Clean up any existing test environment, start CommServer, then server
     try {
         await cleanupTestEnvironment();
@@ -808,8 +829,24 @@ console.log('Starting one.fuse3 connection integration test...\n');
 runConnectionTest()
     .then(async () => {
         console.log('\n✨ Connection integration test completed successfully!');
-        await cleanupTestEnvironment();
-        process.exit(0);
+        console.log('\n📁 Test environment is still running for inspection:');
+        console.log('=' .repeat(70));
+        console.log(`   FUSE mount point: ${MOUNT_POINT}`);
+        console.log(`   Server storage: ${SERVER_STORAGE_DIR}`);
+        console.log(`   Client storage: ${CLIENT_STORAGE_DIR}`);
+        console.log(`   Server HTTP API: http://127.0.0.1:${SERVER_PORT + 1}`);
+        console.log(`   Client HTTP API: http://127.0.0.1:${CLIENT_PORT + 1}`);
+        console.log('\n🔍 You can now inspect:');
+        console.log(`   ls -la ${MOUNT_POINT}`);
+        console.log(`   ls -la ${MOUNT_POINT}/invites`);
+        console.log(`   cat ${MOUNT_POINT}/invites/iop_invite.txt`);
+        console.log(`   curl http://127.0.0.1:${SERVER_PORT + 1}/api/connections/status`);
+        console.log(`   curl http://127.0.0.1:${SERVER_PORT + 1}/api/contacts`);
+        console.log('\n⚠️  Press Ctrl+C when done to clean up and exit');
+        console.log('=' .repeat(70));
+
+        // Keep processes running - don't cleanup or exit
+        // User will manually trigger cleanup with Ctrl+C
     })
     .catch(async (error) => {
         console.error('\n❌ Test failed:', error);

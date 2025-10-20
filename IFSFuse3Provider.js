@@ -5,7 +5,7 @@
  * providing the same interface as IFSProjFSProvider for cross-platform compatibility.
  */
 
-import Fuse from './index.js';
+import Fuse, { ENOENT, EIO } from './index.js';
 import path from 'path';
 
 class IFSFuse3Provider {
@@ -131,7 +131,7 @@ class IFSFuse3Provider {
             } catch (error) {
                 console.log('[JS] _getattr: error:', error.message);
                 this.log('getattr error:', filePath, error.message);
-                callback({ errno: Fuse.ENOENT });
+                callback(ENOENT);
             }
         })();
         console.log('[JS] _getattr returned (async work pending)');
@@ -156,7 +156,7 @@ class IFSFuse3Provider {
                 callback(null, files);
             } catch (error) {
                 this.log('readdir error:', dirPath, error.message);
-                callback({ errno: Fuse.ENOENT }, []);
+                callback(ENOENT, []);
             }
         })();
     }
@@ -202,7 +202,7 @@ class IFSFuse3Provider {
                 }
             } catch (error) {
                 this.log('read error:', filePath, error.message);
-                callback({ errno: Fuse.EIO });
+                callback(EIO);
             }
         })();
     }

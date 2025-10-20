@@ -34,3 +34,6 @@ coverage/
 
 # Misc
 nul
+
+# Test temporary directories
+.tmp/

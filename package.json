@@ -6,12 +6,14 @@
   "type": "module",
   "scripts": {
     "configure": "node-gyp configure",
-    "build": "node-gyp build",
+    "build": "test -f build/Makefile && node-gyp build || node-gyp rebuild",
     "rebuild": "node-gyp rebuild",
     "clean": "node-gyp clean",
-    "test": "node test.js",
+    "test": "node test-read-operations.js",
+    "test:read": "node test-read-operations.js",
+    "test:write": "node test-write-operations.js",
     "test:integration": "node test/integration/connection-test.js",
-    "install": "node-gyp rebuild"
+    "postinstall": "test -f build/Release/fuse3_napi.node || node-gyp rebuild"
   },
   "repository": {
     "type": "git",
@@ -34,7 +36,9 @@
   "devDependencies": {
     "node-gyp": "^9.0.0"
   },
-  "os": ["linux"],
+  "os": [
+    "linux"
+  ],
   "engines": {
     "node": ">=20.0.0"
   }

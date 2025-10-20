@@ -204,27 +204,125 @@ npm run clean
 
 ## Testing
 
-### Unit Tests
+The project includes comprehensive test suites for read operations and integration testing using plain Node.js scripts.
+
+### Quick Start
 
 ```bash
+# Install dependencies
+npm install
+
+# Run all tests (currently just read operations)
 npm test
+
+# Run specific test suites
+npm run test:read        # Read operations
+npm run test:write       # Write operations (not yet implemented)
+npm run test:integration # Integration tests
 ```
 
-### Integration Test
+### Test Suites
 
-The package includes a connection integration test that verifies:
+#### 1. Read Operations Tests (`test-read-operations.js`)
+
+Tests all read-only FUSE operations with 19 test cases:
+
+**Test Coverage:**
+- ✅ Directory listing (root, subdirectories, non-existent)
+- ✅ File reading (root files, nested files, error cases)
+- ✅ Stat operations (files, directories, permissions)
+- ✅ File system utilities (find, grep, head, tail, wc)
+- ✅ File existence checks
+
+**Run:**
+```bash
+npm test
+# or
+npm run test:read
+```
+
+**Expected Result:** All tests should PASS ✅
+
+**Test Implementation:**
+The test creates an in-memory filesystem with predefined files and directories, mounts it via FUSE, and verifies all read operations work correctly using standard Unix utilities.
+
+#### 2. Write Operations Tests (Future)
+
+Tests for write operations (to be implemented):
+- Creating files and directories
+- Writing and appending to files
+- Deleting files and directories
+- Moving/renaming files
+- Changing permissions (chmod)
+
+**Required FUSE operations to implement:**
+- `create()` - for creating files
+- `write()` - for writing data
+- `mkdir()` - for creating directories
+- `unlink()` - for removing files
+- `rmdir()` - for removing directories
+- `rename()` - for moving/renaming
+- `chmod()` - for changing permissions
+- `truncate()` - for truncating files
+
+#### 3. Integration Test (`test/integration/connection-test.js`)
+
+Full end-to-end test that verifies:
 1. FUSE3 mount is accessible
 2. Invite files are exposed correctly
 3. Invite content is valid
-4. Ready for connection establishment
+4. Connection establishment works
+5. Bidirectional contact creation
 
+**Run:**
 ```bash
-# Run integration test (requires ONE Filer running)
-node test/integration/connection-test.js
+npm run test:integration
 
 # With custom mount point
-ONE_FILER_MOUNT=/mnt/one-filer node test/integration/connection-test.js
+ONE_FILER_MOUNT=/mnt/one-filer npm run test:integration
 ```
+
+**Expected output:**
+```
+✅ FUSE3 available
+✅ FUSE mount detected
+✅ Mount point accessible
+✅ Invites directory accessible
+✅ IOP invite file exists and is valid
+✅ IOM invite file exists and is valid
+✅ Connection established successfully
+✅ Bidirectional contacts created
+```
+
+### Cleanup and Troubleshooting
+
+The test suite includes automatic cleanup of stale FUSE mounts. If tests hang or fail:
+
+```bash
+# Manual cleanup of stale mounts
+./cleanup-mounts.sh
+
+# Check for lingering mounts
+mount | grep fuse
+
+# Force unmount if needed (may require sudo)
+fusermount3 -u /path/to/mount
+```
+
+**Common Issues:**
+
+1. **"ENOTCONN: socket is not connected"**
+   - Caused by stale FUSE mounts from crashed tests
+   - Solution: Run `./cleanup-mounts.sh` before testing
+
+2. **Tests hang indefinitely**
+   - Old issue: Was caused by `execSync` deadlock with FUSE
+   - Fixed: All shell commands now use async execution
+   - If still occurs: Kill test process and run cleanup script
+
+3. **"Permission denied" errors**
+   - Ensure user is in the `fuse` group: `sudo usermod -a -G fuse $USER`
+   - Logout and login for group changes to take effect
 
 ### Manual Testing in WSL2
 
@@ -236,6 +334,25 @@ node dist/index.js --fuse-mount /tmp/one-filer
 # In another WSL2 terminal
 ls -la /tmp/one-filer
 cat /tmp/one-filer/invites/iop_invite.txt
+
+# Test read operations
+find /tmp/one-filer -type f
+grep -r "invite" /tmp/one-filer/
+```
+
+### Continuous Integration
+
+For CI/CD pipelines:
+
+```bash
+# Run tests with coverage (if configured)
+npm test -- --coverage
+
+# Run tests with JUnit output
+npm test -- --reporter=junit --outputFile=test-results.xml
+
+# Run tests with verbose output
+npm test -- --reporter=verbose
 ```
 
 ## Performance
@@ -340,9 +457,26 @@ MIT
 
 Contributions welcome! Please ensure:
 - Code compiles on Linux and WSL2
-- Tests pass: `npm test`
-- Integration test works: `node test/integration/connection-test.js`
+- All tests pass: `npm test`
+- Read operations tests pass: `npm run test:read`
+- Integration test works: `npm run test:integration`
 - Follows existing code style
+- Add tests for new features
+
+**Before submitting a PR:**
+```bash
+# Build the native addon
+npm run build
+
+# Run all tests
+npm test
+
+# Run integration test
+npm run test:integration
+
+# Cleanup any stale mounts
+./cleanup-mounts.sh
+```
 
 ## Links
 

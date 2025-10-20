@@ -112,6 +112,22 @@ class Fuse extends EventEmitter {
         };
         
         // Wrap each operation
+        // Helper to convert Date objects or numeric timestamps to Unix time
+        const toUnixTime = (timeValue) => {
+            if (!timeValue) {
+                return Math.floor(Date.now() / 1000);
+            } else if (typeof timeValue === 'number') {
+                // Already a timestamp in milliseconds, convert to seconds
+                return Math.floor(timeValue / 1000);
+            } else if (timeValue instanceof Date) {
+                // Date object, get time in milliseconds and convert to seconds
+                return Math.floor(timeValue.getTime() / 1000);
+            } else {
+                // Default to current time
+                return Math.floor(Date.now() / 1000);
+            }
+        };
+
         if (ops.getattr) {
             wrapped.getattr = (path, cb) => {
                 try {
@@ -119,15 +135,15 @@ class Fuse extends EventEmitter {
                         if (err) {
                             cb(errnoToCode(err.errno || err), null);
                         } else {
-                            // Convert Date objects to timestamps
+                            // Convert Date objects or numeric timestamps to Unix time
                             const stat = {
                                 mode: stats.mode || 0,
                                 uid: stats.uid || process.getuid(),
                                 gid: stats.gid || process.getgid(),
                                 size: stats.size || 0,
-                                atime: stats.atime ? Math.floor(stats.atime.getTime() / 1000) : Date.now() / 1000,
-                                mtime: stats.mtime ? Math.floor(stats.mtime.getTime() / 1000) : Date.now() / 1000,
-                                ctime: stats.ctime ? Math.floor(stats.ctime.getTime() / 1000) : Date.now() / 1000
+                                atime: toUnixTime(stats.atime),
+                                mtime: toUnixTime(stats.mtime),
+                                ctime: toUnixTime(stats.ctime)
                             };
                             cb(0, stat);
                         }
